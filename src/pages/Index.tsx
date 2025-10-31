@@ -3,7 +3,9 @@ import { ScheduleCard } from "@/components/ScheduleCard";
 import { VoiceInput } from "@/components/VoiceInput";
 import { AddScheduleDialog } from "@/components/AddScheduleDialog";
 import { useToast } from "@/hooks/use-toast";
-import { Eye, Calendar } from "lucide-react";
+import { Eye, Calendar, Camera } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { useNavigate } from "react-router-dom";
 
 interface ScheduleItem {
   id: string;
@@ -14,6 +16,7 @@ interface ScheduleItem {
 
 const Index = () => {
   const { toast } = useToast();
+  const navigate = useNavigate();
   const [schedules, setSchedules] = useState<ScheduleItem[]>([
     {
       id: "1",
@@ -172,9 +175,18 @@ const Index = () => {
           </p>
         </header>
 
-        {/* Add Schedule Button */}
-        <div className="flex justify-center mb-8">
+        {/* Action Buttons */}
+        <div className="flex flex-col sm:flex-row gap-4 justify-center mb-8">
           <AddScheduleDialog onAdd={addSchedule} />
+          <Button
+            variant="hero"
+            size="lg"
+            onClick={() => navigate("/detection")}
+            className="gap-2"
+          >
+            <Camera className="w-5 h-5" />
+            Object Detection
+          </Button>
         </div>
 
         {/* Schedules Section */}
