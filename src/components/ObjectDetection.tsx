@@ -38,21 +38,21 @@ export const ObjectDetection = () => {
       try {
         setIsLoading(true);
         toast({
-          title: "Loading AI Model",
+          title: "Loading YOLOv8 Model",
           description: "This may take a moment...",
         });
         
-        // Use MobileNetV4 for fast image classification
-        const classifier = await pipeline(
-          "image-classification",
-          "onnx-community/mobilenetv4_conv_small.e2400_r224_in1k",
+        // Use YOLOv8 for object detection
+        const detector = await pipeline(
+          "object-detection",
+          "onnx-community/yolov8n",
           { device: "webgpu" }
         );
         
-        setModel(classifier);
+        setModel(detector);
         setIsLoading(false);
         toast({
-          title: "Model Loaded",
+          title: "YOLOv8 Loaded",
           description: "Ready to detect objects!",
         });
       } catch (error) {
@@ -60,19 +60,19 @@ export const ObjectDetection = () => {
         setIsLoading(false);
         toast({
           title: "Model Load Failed",
-          description: "Trying alternative method...",
+          description: "Trying CPU fallback...",
           variant: "destructive",
         });
         
         // Fallback to CPU if WebGPU fails
         try {
-          const classifier = await pipeline(
-            "image-classification",
-            "Xenova/mobilenet_v2_1.0_224"
+          const detector = await pipeline(
+            "object-detection",
+            "onnx-community/yolov8n"
           );
-          setModel(classifier);
+          setModel(detector);
           toast({
-            title: "Model Loaded (CPU)",
+            title: "YOLOv8 Loaded (CPU)",
             description: "Ready to detect objects!",
           });
         } catch (fallbackError) {
@@ -137,10 +137,10 @@ export const ObjectDetection = () => {
     context.drawImage(video, 0, 0, canvas.width, canvas.height);
 
     try {
-      // Run classification
-      const results = await model(canvas);
+      // Run YOLOv8 object detection
+      const results = await model(canvas, { threshold: 0.3 });
       
-      // Get top detection
+      // Get top detections
       if (results && results.length > 0) {
         const topResults = results.slice(0, 3).map((r: any) => ({
           label: r.label,
