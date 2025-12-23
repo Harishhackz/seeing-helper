@@ -3,7 +3,7 @@ import { ScheduleCard } from "@/components/ScheduleCard";
 import { VoiceInput } from "@/components/VoiceInput";
 import { AddScheduleDialog } from "@/components/AddScheduleDialog";
 import { useToast } from "@/hooks/use-toast";
-import { Eye, Calendar, Camera } from "lucide-react";
+import { Eye, Calendar, Camera, Navigation2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useNavigate } from "react-router-dom";
 
@@ -270,6 +270,15 @@ const Index = () => {
           >
             <Camera className="w-5 h-5" />
             Object Detection
+          </Button>
+          <Button
+            variant="hero"
+            size="lg"
+            onClick={() => navigate("/navigation")}
+            className="gap-2"
+          >
+            <Navigation2 className="w-5 h-5" />
+            GPS Navigation
           </Button>
         </div>
 
