@@ -1,11 +1,18 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useToast } from '@/hooks/use-toast';
-import { ArrowLeft, Navigation2, Mic, MapPin, Locate } from 'lucide-react';
+import { ArrowLeft, Navigation2, Mic, MapPin, Locate, Volume2, VolumeX } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+
+interface RouteStep {
+  instruction: string;
+  distance: number;
+  location: [number, number];
+  announced: boolean;
+}
 
 const NavigationPage = () => {
   const mapContainer = useRef<HTMLDivElement>(null);
@@ -20,20 +27,101 @@ const NavigationPage = () => {
   const [isTracking, setIsTracking] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [directions, setDirections] = useState<string>('');
+  const [routeSteps, setRouteSteps] = useState<RouteStep[]>([]);
+  const [currentStepIndex, setCurrentStepIndex] = useState(0);
+  const [isNavigating, setIsNavigating] = useState(false);
+  const [voiceEnabled, setVoiceEnabled] = useState(true);
   
   const { toast } = useToast();
   const navigate = useNavigate();
 
   // Text-to-speech
-  const speak = (text: string) => {
-    if ('speechSynthesis' in window) {
+  const speak = useCallback((text: string) => {
+    if ('speechSynthesis' in window && voiceEnabled) {
       window.speechSynthesis.cancel();
       const utterance = new SpeechSynthesisUtterance(text);
       utterance.rate = 0.9;
       utterance.pitch = 1;
       window.speechSynthesis.speak(utterance);
     }
+  }, [voiceEnabled]);
+
+  // Calculate distance between two coordinates in meters
+  const getDistanceBetweenPoints = (
+    coord1: [number, number],
+    coord2: [number, number]
+  ): number => {
+    const R = 6371000; // Earth's radius in meters
+    const lat1 = (coord1[1] * Math.PI) / 180;
+    const lat2 = (coord2[1] * Math.PI) / 180;
+    const deltaLat = ((coord2[1] - coord1[1]) * Math.PI) / 180;
+    const deltaLon = ((coord2[0] - coord1[0]) * Math.PI) / 180;
+
+    const a =
+      Math.sin(deltaLat / 2) * Math.sin(deltaLat / 2) +
+      Math.cos(lat1) * Math.cos(lat2) * Math.sin(deltaLon / 2) * Math.sin(deltaLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+    return R * c;
   };
+
+  // Check if user is near a turn and announce it
+  const checkAndAnnounceDirection = useCallback(
+    (currentLocation: [number, number]) => {
+      if (!isNavigating || routeSteps.length === 0 || !voiceEnabled) return;
+
+      const currentStep = routeSteps[currentStepIndex];
+      if (!currentStep || currentStep.announced) return;
+
+      const distanceToNextTurn = getDistanceBetweenPoints(
+        currentLocation,
+        currentStep.location
+      );
+
+      // Announce when within 30 meters of the next turn
+      if (distanceToNextTurn < 30) {
+        speak(currentStep.instruction);
+        
+        // Mark as announced and move to next step
+        setRouteSteps((prev) =>
+          prev.map((step, idx) =>
+            idx === currentStepIndex ? { ...step, announced: true } : step
+          )
+        );
+
+        // Move to next step
+        if (currentStepIndex < routeSteps.length - 1) {
+          setCurrentStepIndex((prev) => prev + 1);
+          
+          // Announce upcoming step distance
+          const nextStep = routeSteps[currentStepIndex + 1];
+          if (nextStep) {
+            setTimeout(() => {
+              const distanceText = nextStep.distance > 100 
+                ? `In ${Math.round(nextStep.distance)} meters` 
+                : 'Shortly';
+              speak(`${distanceText}, ${nextStep.instruction}`);
+            }, 3000);
+          }
+        } else {
+          // Arrived at destination
+          setTimeout(() => {
+            speak("You have arrived at your destination.");
+            setIsNavigating(false);
+            toast({
+              title: "🎉 Arrived!",
+              description: "You have reached your destination",
+            });
+          }, 2000);
+        }
+      } else if (distanceToNextTurn < 50 && !currentStep.announced) {
+        // Pre-announce when within 50 meters
+        const preAnnouncement = `In ${Math.round(distanceToNextTurn)} meters, ${currentStep.instruction}`;
+        speak(preAnnouncement);
+      }
+    },
+    [isNavigating, routeSteps, currentStepIndex, voiceEnabled, speak, toast]
+  );
 
   // Get user's current location
   const getCurrentLocation = () => {
@@ -89,7 +177,7 @@ const NavigationPage = () => {
     );
   };
 
-  // Watch position for continuous tracking
+  // Watch position for continuous tracking and voice guidance
   useEffect(() => {
     let watchId: number;
 
@@ -97,21 +185,35 @@ const NavigationPage = () => {
       watchId = navigator.geolocation.watchPosition(
         (position) => {
           const { longitude, latitude } = position.coords;
-          setUserLocation([longitude, latitude]);
+          const newLocation: [number, number] = [longitude, latitude];
+          setUserLocation(newLocation);
 
           if (userMarker.current) {
-            userMarker.current.setLngLat([longitude, latitude]);
+            userMarker.current.setLngLat(newLocation);
+          }
+
+          // Check for turn-by-turn announcements
+          if (isNavigating) {
+            checkAndAnnounceDirection(newLocation);
+          }
+
+          // Keep map centered on user during navigation
+          if (isNavigating && map.current) {
+            map.current.easeTo({
+              center: newLocation,
+              duration: 500,
+            });
           }
         },
         (error) => console.error(error),
-        { enableHighAccuracy: true, maximumAge: 1000 }
+        { enableHighAccuracy: true, maximumAge: 1000, timeout: 5000 }
       );
     }
 
     return () => {
       if (watchId) navigator.geolocation.clearWatch(watchId);
     };
-  }, [isTracking, isMapReady]);
+  }, [isTracking, isMapReady, isNavigating, checkAndAnnounceDirection]);
 
   // Search for destination
   const searchDestination = async (query: string) => {
@@ -173,7 +275,7 @@ const NavigationPage = () => {
   const getDirections = async (start: [number, number], end: [number, number]) => {
     try {
       const response = await fetch(
-        `https://api.mapbox.com/directions/v5/mapbox/walking/${start[0]},${start[1]};${end[0]},${end[1]}?steps=true&voice_instructions=true&access_token=${mapboxToken}`
+        `https://api.mapbox.com/directions/v5/mapbox/walking/${start[0]},${start[1]};${end[0]},${end[1]}?steps=true&geometries=geojson&voice_instructions=true&access_token=${mapboxToken}`
       );
       const data = await response.json();
 
@@ -213,12 +315,29 @@ const NavigationPage = () => {
           });
         }
 
-        // Get step-by-step instructions
-        const steps = route.legs[0].steps.map((step: any) => step.maneuver.instruction).join('. ');
-        setDirections(steps);
+        // Parse steps for turn-by-turn navigation
+        const steps: RouteStep[] = route.legs[0].steps.map((step: any) => ({
+          instruction: step.maneuver.instruction,
+          distance: step.distance,
+          location: step.maneuver.location as [number, number],
+          announced: false,
+        }));
+        
+        setRouteSteps(steps);
+        setCurrentStepIndex(0);
+        setIsNavigating(true);
+
+        // Get step-by-step instructions for display
+        const stepsText = steps.map(s => s.instruction).join('. ');
+        setDirections(stepsText);
 
         const summary = `Distance: ${distanceKm} kilometers. Walking time: about ${durationMin} minutes.`;
-        speak(`${summary}. ${route.legs[0].steps[0].maneuver.instruction}`);
+        speak(`${summary}. Starting navigation. ${steps[0]?.instruction || ''}`);
+
+        toast({
+          title: "🧭 Navigation Started",
+          description: "Voice guidance is active",
+        });
 
         // Fit map to show entire route
         const coordinates = route.geometry.coordinates;
@@ -231,6 +350,18 @@ const NavigationPage = () => {
     } catch (error) {
       console.error('Directions error:', error);
     }
+  };
+
+  // Stop navigation
+  const stopNavigation = () => {
+    setIsNavigating(false);
+    setRouteSteps([]);
+    setCurrentStepIndex(0);
+    speak("Navigation stopped.");
+    toast({
+      title: "Navigation Stopped",
+      description: "Voice guidance disabled",
+    });
   };
 
   // Voice input for destination
@@ -389,32 +520,107 @@ const NavigationPage = () => {
           <div className="flex-1 relative">
             <div ref={mapContainer} className="absolute inset-0" />
             
-            {/* Locate Button */}
-            <Button
-              variant="secondary"
-              size="icon"
-              onClick={getCurrentLocation}
-              className="absolute bottom-24 right-4 h-14 w-14 rounded-full shadow-lg"
-              aria-label="Find my location"
-            >
-              <Locate className="w-6 h-6" />
-            </Button>
+            {/* Navigation Status Banner */}
+            {isNavigating && (
+              <div className="absolute top-4 left-4 right-4 bg-primary text-primary-foreground p-4 rounded-lg shadow-lg">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <Navigation2 className="w-6 h-6 animate-pulse" />
+                    <div>
+                      <p className="font-semibold">Navigating</p>
+                      <p className="text-sm opacity-90">
+                        {routeSteps[currentStepIndex]?.instruction || 'Follow the route'}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="secondary"
+                      size="icon"
+                      onClick={() => setVoiceEnabled(!voiceEnabled)}
+                      className="h-10 w-10"
+                      aria-label={voiceEnabled ? "Mute voice" : "Unmute voice"}
+                    >
+                      {voiceEnabled ? <Volume2 className="w-5 h-5" /> : <VolumeX className="w-5 h-5" />}
+                    </Button>
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      onClick={stopNavigation}
+                    >
+                      Stop
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )}
+            
+            {/* Control Buttons */}
+            <div className="absolute bottom-24 right-4 flex flex-col gap-3">
+              <Button
+                variant="secondary"
+                size="icon"
+                onClick={() => setVoiceEnabled(!voiceEnabled)}
+                className="h-14 w-14 rounded-full shadow-lg"
+                aria-label={voiceEnabled ? "Mute voice guidance" : "Enable voice guidance"}
+              >
+                {voiceEnabled ? <Volume2 className="w-6 h-6" /> : <VolumeX className="w-6 h-6" />}
+              </Button>
+              <Button
+                variant="secondary"
+                size="icon"
+                onClick={getCurrentLocation}
+                className="h-14 w-14 rounded-full shadow-lg"
+                aria-label="Find my location"
+              >
+                <Locate className="w-6 h-6" />
+              </Button>
+            </div>
           </div>
 
           {/* Directions Panel */}
           {directions && (
-            <div className="p-4 bg-card border-t border-border max-h-32 overflow-y-auto">
-              <h3 className="font-semibold mb-2">Directions:</h3>
-              <p className="text-sm text-muted-foreground">{directions}</p>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => speak(directions)}
-                className="mt-2"
-              >
-                <Mic className="w-4 h-4 mr-2" />
-                Read Directions
-              </Button>
+            <div className="p-4 bg-card border-t border-border">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="font-semibold">
+                  {isNavigating ? `Step ${currentStepIndex + 1} of ${routeSteps.length}` : 'Directions'}
+                </h3>
+                {isNavigating && (
+                  <span className="text-sm text-muted-foreground">
+                    {routeSteps[currentStepIndex]?.distance 
+                      ? `${Math.round(routeSteps[currentStepIndex].distance)}m to next turn`
+                      : ''}
+                  </span>
+                )}
+              </div>
+              <p className="text-sm text-muted-foreground mb-3">
+                {isNavigating 
+                  ? routeSteps[currentStepIndex]?.instruction 
+                  : directions}
+              </p>
+              <div className="flex gap-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => speak(
+                    isNavigating 
+                      ? routeSteps[currentStepIndex]?.instruction || ''
+                      : directions
+                  )}
+                >
+                  <Volume2 className="w-4 h-4 mr-2" />
+                  Read Aloud
+                </Button>
+                {isNavigating && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={stopNavigation}
+                  >
+                    Stop Navigation
+                  </Button>
+                )}
+              </div>
             </div>
           )}
         </>
