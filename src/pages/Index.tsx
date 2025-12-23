@@ -202,11 +202,27 @@ const Index = () => {
       const now = new Date();
       const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
       
+      // Calculate time 10 minutes from now
+      const tenMinutesLater = new Date(now.getTime() + 10 * 60 * 1000);
+      const reminderTime = `${String(tenMinutesLater.getHours()).padStart(2, '0')}:${String(tenMinutesLater.getMinutes()).padStart(2, '0')}`;
+      
       schedules.forEach(schedule => {
-        if (schedule.time === currentTime) {
-          const message = `Reminder: ${schedule.title}. ${schedule.description || ''}`;
+        // 10-minute advance reminder
+        if (schedule.time === reminderTime) {
+          const message = `Reminder: ${schedule.title} is coming up in 10 minutes.`;
           toast({
-            title: "⏰ Schedule Reminder",
+            title: "⏰ Upcoming in 10 Minutes",
+            description: schedule.title,
+            duration: 10000,
+          });
+          speak(message);
+        }
+        
+        // Exact time reminder
+        if (schedule.time === currentTime) {
+          const message = `It's time for: ${schedule.title}. ${schedule.description || ''}`;
+          toast({
+            title: "🔔 Schedule Now!",
             description: schedule.title,
             duration: 10000,
           });
@@ -215,6 +231,9 @@ const Index = () => {
       });
     };
 
+    // Check immediately on load
+    checkSchedules();
+    
     const interval = setInterval(checkSchedules, 60000);
     return () => clearInterval(interval);
   }, [schedules]);
