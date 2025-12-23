@@ -50,6 +50,65 @@ const Index = () => {
     }
   };
 
+  // Parse voice command to extract schedule details
+  const parseAndAddSchedule = (transcript: string) => {
+    // Extract time from speech (e.g., "8 AM", "10:30 PM", "at 3", "at 15:00")
+    const timePatterns = [
+      /(\d{1,2}):(\d{2})\s*(am|pm)?/i,
+      /(\d{1,2})\s*(am|pm)/i,
+      /at\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i,
+    ];
+    
+    let hours = 9; // default
+    let minutes = 0;
+    let timeFound = false;
+    
+    for (const pattern of timePatterns) {
+      const match = transcript.match(pattern);
+      if (match) {
+        hours = parseInt(match[1]);
+        minutes = match[2] && !isNaN(parseInt(match[2])) ? parseInt(match[2]) : 0;
+        const period = match[3]?.toLowerCase();
+        
+        if (period === 'pm' && hours < 12) hours += 12;
+        if (period === 'am' && hours === 12) hours = 0;
+        
+        timeFound = true;
+        break;
+      }
+    }
+    
+    // Extract title - remove common phrases and time references
+    let title = transcript
+      .replace(/add schedule|schedule|remind me to|remind me|set reminder for|set reminder|at\s+\d{1,2}(:\d{2})?\s*(am|pm)?|\d{1,2}(:\d{2})?\s*(am|pm)?/gi, '')
+      .trim();
+    
+    // Capitalize first letter
+    title = title.charAt(0).toUpperCase() + title.slice(1);
+    
+    if (!title || title.length < 2) {
+      title = "New Reminder";
+    }
+    
+    const timeString = `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+    
+    addSchedule(title, timeString);
+    
+    if (timeFound) {
+      speak(`Schedule added: ${title} at ${formatTime(timeString)}`);
+    } else {
+      speak(`Schedule added: ${title} at 9 AM. Say a time like 8 AM or 3 PM to set a specific time.`);
+    }
+  };
+
+  // Format time for speech
+  const formatTime = (time: string) => {
+    const [hours, minutes] = time.split(':').map(Number);
+    const period = hours >= 12 ? 'PM' : 'AM';
+    const displayHours = hours % 12 || 12;
+    return minutes > 0 ? `${displayHours}:${String(minutes).padStart(2, '0')} ${period}` : `${displayHours} ${period}`;
+  };
+
   // Speech recognition setup
   const toggleListening = () => {
     if (!('webkitSpeechRecognition' in window || 'SpeechRecognition' in window)) {
@@ -82,12 +141,18 @@ const Index = () => {
     };
 
     recognition.onresult = (event: any) => {
-      const transcript = event.results[0][0].transcript;
+      const transcript = event.results[0][0].transcript.toLowerCase();
       toast({
         title: "You said:",
         description: transcript,
       });
-      speak(`You said: ${transcript}`);
+      
+      // Parse voice command to add schedule
+      if (transcript.includes("add schedule") || transcript.includes("schedule") || transcript.includes("remind me") || transcript.includes("set reminder")) {
+        parseAndAddSchedule(transcript);
+      } else {
+        speak(`You said: ${transcript}`);
+      }
       setIsListening(false);
     };
 
