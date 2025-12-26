@@ -129,19 +129,61 @@ const Index = () => {
     return minutes > 0 ? `${displayHours}:${String(minutes).padStart(2, '0')} ${period}` : `${displayHours} ${period}`;
   };
 
+  // Request microphone permission
+  const requestMicrophonePermission = async (): Promise<boolean> => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // Stop all tracks after getting permission
+      stream.getTracks().forEach(track => track.stop());
+      return true;
+    } catch (error: any) {
+      console.error('Microphone permission error:', error);
+      if (error.name === 'NotAllowedError') {
+        toast({
+          title: "Microphone Access Denied",
+          description: "Please allow microphone access in your browser settings and reload the page.",
+          variant: "destructive",
+          duration: 10000,
+        });
+        speak("Microphone access was denied. Please allow microphone access in your browser settings.");
+      } else if (error.name === 'NotFoundError') {
+        toast({
+          title: "No Microphone Found",
+          description: "Please connect a microphone and try again.",
+          variant: "destructive",
+        });
+        speak("No microphone was found. Please connect a microphone.");
+      } else {
+        toast({
+          title: "Microphone Error",
+          description: "Could not access microphone. Please check your device settings.",
+          variant: "destructive",
+        });
+      }
+      return false;
+    }
+  };
+
   // Speech recognition setup
-  const toggleListening = () => {
+  const toggleListening = async () => {
     if (!('webkitSpeechRecognition' in window || 'SpeechRecognition' in window)) {
       toast({
         title: "Not Supported",
-        description: "Speech recognition is not supported in your browser",
+        description: "Speech recognition is not supported in your browser. Try Chrome or Edge.",
         variant: "destructive",
       });
+      speak("Speech recognition is not supported in your browser. Please try Chrome or Edge.");
       return;
     }
 
     if (isListening) {
       setIsListening(false);
+      return;
+    }
+
+    // Request microphone permission first
+    const hasPermission = await requestMicrophonePermission();
+    if (!hasPermission) {
       return;
     }
 
@@ -155,8 +197,8 @@ const Index = () => {
     recognition.onstart = () => {
       setIsListening(true);
       toast({
-        title: "Listening",
-        description: "Speak now...",
+        title: "🎤 Listening",
+        description: "Speak now... Say 'remind me to [task] at [time]'",
       });
     };
 
@@ -168,10 +210,10 @@ const Index = () => {
       });
       
       // Parse voice command to add schedule
-      if (transcript.includes("add schedule") || transcript.includes("schedule") || transcript.includes("remind me") || transcript.includes("set reminder")) {
+      if (transcript.includes("add") || transcript.includes("schedule") || transcript.includes("remind") || transcript.includes("set")) {
         parseAndAddSchedule(transcript);
       } else {
-        speak(`You said: ${transcript}`);
+        speak(`You said: ${transcript}. To add a schedule, say something like: remind me to take medicine at 8 AM.`);
       }
       setIsListening(false);
     };
@@ -179,11 +221,36 @@ const Index = () => {
     recognition.onerror = (event: any) => {
       console.error('Speech recognition error:', event.error);
       setIsListening(false);
+      
+      let errorMessage = "Could not recognize speech. Please try again.";
+      let errorTitle = "Recognition Error";
+      
+      switch (event.error) {
+        case 'audio-capture':
+          errorTitle = "Microphone Error";
+          errorMessage = "Could not capture audio. Please check your microphone is connected and allowed.";
+          break;
+        case 'not-allowed':
+          errorTitle = "Permission Denied";
+          errorMessage = "Microphone access denied. Please allow microphone in browser settings.";
+          break;
+        case 'no-speech':
+          errorTitle = "No Speech Detected";
+          errorMessage = "No speech was detected. Please try speaking again.";
+          break;
+        case 'network':
+          errorTitle = "Network Error";
+          errorMessage = "Network error occurred. Please check your internet connection.";
+          break;
+      }
+      
       toast({
-        title: "Error",
-        description: "Could not recognize speech. Please try again.",
+        title: errorTitle,
+        description: errorMessage,
         variant: "destructive",
+        duration: 8000,
       });
+      speak(errorMessage);
     };
 
     recognition.onend = () => {
