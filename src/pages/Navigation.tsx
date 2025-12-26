@@ -435,7 +435,7 @@ const NavigationPage = () => {
     recognition.onresult = (event: any) => {
       const transcript = event.results[0][0].transcript;
       setDestination(transcript);
-      toast
+      toast({
         title: "Searching",
         description: `Looking for: ${transcript}`,
       });
