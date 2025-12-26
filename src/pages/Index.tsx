@@ -12,6 +12,9 @@ interface ScheduleItem {
   title: string;
   time: string;
   description?: string;
+  reminderMinutes?: number; // Minutes before to remind (default 10)
+  reminded?: boolean; // Track if advance reminder was given
+  notified?: boolean; // Track if exact time notification was given
 }
 
 const Index = () => {
@@ -23,12 +26,14 @@ const Index = () => {
       title: "Morning Medicine",
       time: "08:00",
       description: "Take blood pressure medication with water",
+      reminderMinutes: 10,
     },
     {
       id: "2",
       title: "Lunch Reminder",
       time: "12:30",
       description: "Time for lunch",
+      reminderMinutes: 10,
     },
   ]);
   const [isListening, setIsListening] = useState(false);
@@ -78,9 +83,24 @@ const Index = () => {
       }
     }
     
+    // Extract reminder time from speech (e.g., "remind me 5 minutes before", "10 minutes early")
+    let reminderMinutes = 10; // default 10 minutes
+    const reminderPatterns = [
+      /(\d+)\s*minutes?\s*(?:before|early|ahead)/i,
+      /remind\s*(?:me)?\s*(\d+)\s*minutes?/i,
+    ];
+    
+    for (const pattern of reminderPatterns) {
+      const match = transcript.match(pattern);
+      if (match) {
+        reminderMinutes = parseInt(match[1]);
+        break;
+      }
+    }
+    
     // Extract title - remove common phrases and time references
     let title = transcript
-      .replace(/add schedule|schedule|remind me to|remind me|set reminder for|set reminder|at\s+\d{1,2}(:\d{2})?\s*(am|pm)?|\d{1,2}(:\d{2})?\s*(am|pm)?/gi, '')
+      .replace(/add schedule|schedule|remind me to|remind me|set reminder for|set reminder|at\s+\d{1,2}(:\d{2})?\s*(am|pm)?|\d{1,2}(:\d{2})?\s*(am|pm)?|\d+\s*minutes?\s*(?:before|early|ahead)|remind\s*(?:me)?\s*\d+\s*minutes?/gi, '')
       .trim();
     
     // Capitalize first letter
@@ -92,12 +112,12 @@ const Index = () => {
     
     const timeString = `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
     
-    addSchedule(title, timeString);
+    addSchedule(title, timeString, undefined, reminderMinutes);
     
     if (timeFound) {
-      speak(`Schedule added: ${title} at ${formatTime(timeString)}`);
+      speak(`Schedule added: ${title} at ${formatTime(timeString)}. I will remind you ${reminderMinutes} minutes before.`);
     } else {
-      speak(`Schedule added: ${title} at 9 AM. Say a time like 8 AM or 3 PM to set a specific time.`);
+      speak(`Schedule added: ${title} at 9 AM with ${reminderMinutes} minute reminder. Say a time like 8 AM or 3 PM to set a specific time.`);
     }
   };
 
@@ -173,19 +193,21 @@ const Index = () => {
     recognition.start();
   };
 
-  const addSchedule = (title: string, time: string, description?: string) => {
+  const addSchedule = (title: string, time: string, description?: string, reminderMinutes: number = 10) => {
     const newSchedule: ScheduleItem = {
       id: Date.now().toString(),
       title,
       time,
       description,
+      reminderMinutes,
+      reminded: false,
+      notified: false,
     };
     setSchedules([...schedules, newSchedule]);
     toast({
       title: "Schedule Added",
-      description: `${title} at ${time}`,
+      description: `${title} at ${time} (${reminderMinutes}min reminder)`,
     });
-    speak(`Schedule added: ${title} at ${time}`);
   };
 
   const deleteSchedule = (id: string) => {
@@ -196,47 +218,64 @@ const Index = () => {
     });
   };
 
-  // Check for due schedules every minute
+  // Check for due schedules every 30 seconds for more accurate reminders
   useEffect(() => {
     const checkSchedules = () => {
       const now = new Date();
-      const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+      const currentHours = now.getHours();
+      const currentMinutes = now.getMinutes();
       
-      // Calculate time 10 minutes from now
-      const tenMinutesLater = new Date(now.getTime() + 10 * 60 * 1000);
-      const reminderTime = `${String(tenMinutesLater.getHours()).padStart(2, '0')}:${String(tenMinutesLater.getMinutes()).padStart(2, '0')}`;
-      
-      schedules.forEach(schedule => {
-        // 10-minute advance reminder
-        if (schedule.time === reminderTime) {
-          const message = `Reminder: ${schedule.title} is coming up in 10 minutes.`;
+      let hasUpdates = false;
+      const updatedSchedules = schedules.map(schedule => {
+        const [scheduleHours, scheduleMinutes] = schedule.time.split(':').map(Number);
+        const scheduleDate = new Date();
+        scheduleDate.setHours(scheduleHours, scheduleMinutes, 0, 0);
+        
+        const timeDiffMs = scheduleDate.getTime() - now.getTime();
+        const timeDiffMinutes = Math.floor(timeDiffMs / (1000 * 60));
+        const reminderMinutes = schedule.reminderMinutes || 10;
+        
+        // Advance reminder (X minutes before)
+        if (!schedule.reminded && timeDiffMinutes > 0 && timeDiffMinutes <= reminderMinutes) {
+          const message = `Reminder: ${schedule.title} is coming up in ${timeDiffMinutes} minute${timeDiffMinutes !== 1 ? 's' : ''}.`;
           toast({
-            title: "⏰ Upcoming in 10 Minutes",
+            title: `⏰ Upcoming in ${timeDiffMinutes} min`,
             description: schedule.title,
             duration: 10000,
           });
           speak(message);
+          hasUpdates = true;
+          return { ...schedule, reminded: true };
         }
         
-        // Exact time reminder
-        if (schedule.time === currentTime) {
+        // Exact time reminder (within 1 minute window)
+        if (!schedule.notified && timeDiffMinutes <= 0 && timeDiffMinutes > -2) {
           const message = `It's time for: ${schedule.title}. ${schedule.description || ''}`;
           toast({
             title: "🔔 Schedule Now!",
             description: schedule.title,
-            duration: 10000,
+            duration: 15000,
           });
           speak(message);
+          hasUpdates = true;
+          return { ...schedule, notified: true };
         }
+        
+        return schedule;
       });
+      
+      if (hasUpdates) {
+        setSchedules(updatedSchedules);
+      }
     };
 
     // Check immediately on load
     checkSchedules();
     
-    const interval = setInterval(checkSchedules, 60000);
+    // Check every 30 seconds for more precise reminders
+    const interval = setInterval(checkSchedules, 30000);
     return () => clearInterval(interval);
-  }, [schedules]);
+  }, [schedules, toast]);
 
   // Welcome message
   useEffect(() => {
