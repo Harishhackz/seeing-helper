@@ -364,14 +364,55 @@ const NavigationPage = () => {
     });
   };
 
+  // Request microphone permission
+  const requestMicrophonePermission = async (): Promise<boolean> => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getTracks().forEach(track => track.stop());
+      return true;
+    } catch (error: any) {
+      console.error('Microphone permission error:', error);
+      if (error.name === 'NotAllowedError') {
+        toast({
+          title: "Microphone Access Denied",
+          description: "Please allow microphone access in your browser settings.",
+          variant: "destructive",
+          duration: 10000,
+        });
+        speak("Microphone access was denied. Please allow microphone in your browser settings.");
+      } else if (error.name === 'NotFoundError') {
+        toast({
+          title: "No Microphone Found",
+          description: "Please connect a microphone and try again.",
+          variant: "destructive",
+        });
+        speak("No microphone was found. Please connect a microphone.");
+      } else {
+        toast({
+          title: "Microphone Error",
+          description: "Could not access microphone.",
+          variant: "destructive",
+        });
+      }
+      return false;
+    }
+  };
+
   // Voice input for destination
-  const startVoiceSearch = () => {
+  const startVoiceSearch = async () => {
     if (!('webkitSpeechRecognition' in window || 'SpeechRecognition' in window)) {
       toast({
         title: "Not Supported",
-        description: "Speech recognition not supported",
+        description: "Speech recognition not supported. Try Chrome or Edge.",
         variant: "destructive",
       });
+      speak("Speech recognition is not supported in your browser. Please try Chrome or Edge.");
+      return;
+    }
+
+    // Request microphone permission first
+    const hasPermission = await requestMicrophonePermission();
+    if (!hasPermission) {
       return;
     }
 
@@ -384,19 +425,57 @@ const NavigationPage = () => {
 
     recognition.onstart = () => {
       setIsListening(true);
+      toast({
+        title: "🎤 Listening",
+        description: "Say the place you want to go to...",
+      });
       speak("Where would you like to go?");
     };
 
     recognition.onresult = (event: any) => {
       const transcript = event.results[0][0].transcript;
       setDestination(transcript);
+      toast({
+        title: "Searching",
+        description: `Looking for: ${transcript}`,
+      });
       searchDestination(transcript);
       setIsListening(false);
     };
 
-    recognition.onerror = () => {
+    recognition.onerror = (event: any) => {
+      console.error('Speech recognition error:', event.error);
       setIsListening(false);
-      speak("Could not understand. Please try again.");
+      
+      let errorMessage = "Could not recognize speech. Please try again.";
+      let errorTitle = "Recognition Error";
+      
+      switch (event.error) {
+        case 'audio-capture':
+          errorTitle = "Microphone Error";
+          errorMessage = "Could not capture audio. Check your microphone is connected and allowed.";
+          break;
+        case 'not-allowed':
+          errorTitle = "Permission Denied";
+          errorMessage = "Microphone access denied. Allow microphone in browser settings.";
+          break;
+        case 'no-speech':
+          errorTitle = "No Speech Detected";
+          errorMessage = "No speech was detected. Please try speaking again.";
+          break;
+        case 'network':
+          errorTitle = "Network Error";
+          errorMessage = "Network error. Check your internet connection.";
+          break;
+      }
+      
+      toast({
+        title: errorTitle,
+        description: errorMessage,
+        variant: "destructive",
+        duration: 8000,
+      });
+      speak(errorMessage);
     };
 
     recognition.onend = () => {
